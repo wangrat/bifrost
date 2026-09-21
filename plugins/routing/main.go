@@ -19,6 +19,7 @@ import (
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/framework/configstore"
+	configstoreTables "github.com/maximhq/bifrost/framework/configstore/tables"
 	"github.com/maximhq/bifrost/framework/vectorstore"
 	"github.com/maximhq/bifrost/plugins/routing/complexity"
 	"github.com/maximhq/bifrost/plugins/routing/rules"
@@ -526,18 +527,18 @@ func (p *RoutingPlugin) applyRoutingRules(ctx *schemas.BifrostContext, req *sche
 	if len(decision.Fallbacks) > 0 {
 		resolvedFallbacks := make([]schemas.Fallback, 0, len(decision.Fallbacks))
 		for _, fb := range decision.Fallbacks {
-			fbProvider, fbModel := schemas.ParseModelString(fb, "")
-			trimmedFbProvider := strings.TrimSpace(string(fbProvider))
+			fbProvider, fbModel := fb.Split()
 			trimmedFbModel := strings.TrimSpace(fbModel)
-			if trimmedFbProvider == "" {
+			if fbProvider == "" {
 				continue
 			}
 			if trimmedFbModel == "" && model != "" {
 				trimmedFbModel = model
 			}
 			resolvedFallbacks = append(resolvedFallbacks, schemas.Fallback{
-				Provider: schemas.ModelProvider(trimmedFbProvider),
+				Provider: fbProvider,
 				Model:    trimmedFbModel,
+				KeyID:    strings.TrimSpace(fb.KeyID),
 			})
 		}
 		req.SetFallbacks(resolvedFallbacks)
@@ -552,7 +553,7 @@ func (p *RoutingPlugin) applyRoutingRules(ctx *schemas.BifrostContext, req *sche
 		ctx.SetValue(schemas.BifrostContextKeyRoutingPinnedAPIKeyID, decision.KeyID)
 	}
 
-	p.logger.Debug("[Routing] Applied routing decision: provider=%s, model=%s, keyID=%s, fallbacks=%v", decision.Provider, decision.Model, decision.KeyID, decision.Fallbacks)
+	p.logger.Debug("[Routing] Applied routing decision: provider=%s, model=%s, keyID=%s, fallbacks=%v", decision.Provider, decision.Model, decision.KeyID, configstoreTables.RoutingFallbackStrings(decision.Fallbacks))
 	return decision, nil
 }
 

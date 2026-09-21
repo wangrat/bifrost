@@ -1,11 +1,13 @@
 package tables
 
 import (
+	"bytes"
 	"strings"
 	"time"
 
 	"github.com/bytedance/sonic"
 	bifrost "github.com/maximhq/bifrost/core"
+	"github.com/maximhq/bifrost/core/schemas"
 	"gorm.io/gorm"
 )
 
@@ -21,8 +23,8 @@ type TableRoutingRule struct {
 	// Routing Targets (output) — 1:many relationship; weights must sum to 1
 	Targets []TableRoutingTarget `gorm:"foreignKey:RuleID;constraint:OnDelete:CASCADE" json:"targets"`
 
-	Fallbacks       *string  `gorm:"type:text" json:"-"`           // JSON array of fallback chains
-	ParsedFallbacks []string `gorm:"-" json:"fallbacks,omitempty"` // Parsed fallbacks from JSON
+	Fallbacks       *string           `gorm:"type:text" json:"-"`           // JSON array of fallback chains
+	ParsedFallbacks []RoutingFallback `gorm:"-" json:"fallbacks,omitempty"` // Parsed fallbacks from JSON
 
 	Query       *string        `gorm:"type:text" json:"-"`
 	ParsedQuery map[string]any `gorm:"-" json:"query,omitempty"`
@@ -92,6 +94,66 @@ func (r *TableRoutingRule) AfterFind(tx *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// RoutingFallback is one entry in a routing rule's fallback chain, decoded from either the legacy "provider/model" string or an object that pins a provider key.
+type RoutingFallback struct {
+	Model           string  `json:"model,omitempty"` // "provider/model", the same combined form the request body's model field uses
+	KeyID           string  `json:"key_id,omitempty"`
+	ProviderKeyName *string `json:"provider_key_name,omitempty"` // config-only alias; resolved to key_id during load
+}
+
+// IsPinned reports whether this fallback names a specific provider key.
+func (f RoutingFallback) IsPinned() bool {
+	return strings.TrimSpace(f.KeyID) != "" || (f.ProviderKeyName != nil && strings.TrimSpace(*f.ProviderKeyName) != "")
+}
+
+// String renders the legacy "provider/model" form.
+func (f RoutingFallback) String() string {
+	return f.Model
+}
+
+// Split resolves the combined model into its provider and model parts.
+func (f RoutingFallback) Split() (schemas.ModelProvider, string) {
+	return schemas.ParseModelString(strings.TrimSpace(f.Model), "")
+}
+
+// MarshalJSON emits the legacy string unless a key is pinned, so unpinned rules keep their config hash.
+func (f RoutingFallback) MarshalJSON() ([]byte, error) {
+	if !f.IsPinned() {
+		return sonic.Marshal(f.Model)
+	}
+	type alias RoutingFallback
+	return sonic.Marshal(alias(f))
+}
+
+// UnmarshalJSON accepts the legacy "provider/model" string and the object form.
+func (f *RoutingFallback) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		var model string
+		if err := sonic.Unmarshal(trimmed, &model); err != nil {
+			return err
+		}
+		*f = RoutingFallback{Model: model}
+		return nil
+	}
+	type alias RoutingFallback
+	var decoded alias
+	if err := sonic.Unmarshal(trimmed, &decoded); err != nil {
+		return err
+	}
+	*f = RoutingFallback(decoded)
+	return nil
+}
+
+// RoutingFallbackStrings renders a fallback slice in its legacy string form, for logs.
+func RoutingFallbackStrings(fallbacks []RoutingFallback) []string {
+	out := make([]string, 0, len(fallbacks))
+	for _, fb := range fallbacks {
+		out = append(out, fb.Model)
+	}
+	return out
 }
 
 // TableRoutingTarget represents a weighted routing target for probabilistic routing.
