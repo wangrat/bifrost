@@ -251,7 +251,8 @@ type BifrostResponsesResponse struct {
 	ServiceTier          *BifrostServiceTier                 `json:"service_tier"`
 	Speed                *string                             `json:"speed,omitempty"`         // "fast" | "standard" — speed actually served (Anthropic fast mode); drives fast-mode billing
 	InferenceGeo         *string                             `json:"inference_geo,omitempty"` // "us" | "global" — inference geography served (Anthropic data residency); drives the 1.1x US multiplier
-	Diagnostics          *CacheDiagnostics                   `json:"diagnostics,omitempty"`   // Anthropic cache diagnostics (cache-diagnosis-2026-04-07); first prompt-cache prefix divergence point
+	Diagnostics          *CacheDiagnostics                   `json:"diagnostics,omitempty"`       // Anthropic cache diagnostics (cache-diagnosis-2026-04-07); first prompt-cache prefix divergence point
+	SafeguardResults     json.RawMessage                     `json:"safeguard_results,omitempty"` // Claude Code auto-mode classifier verdicts (opaque; forwarded unchanged per the gateway compatibility guide). Not copied by WithDefaults, so OpenAI-shaped surfaces never see it.
 	Container            *ResponsesResponseContainer         `json:"container,omitempty"`     // Code-execution sandbox container (Anthropic surfaces it on the response / final streaming message_delta). The neutral per-call id also lives on ResponsesCodeInterpreterToolCall.ContainerID.
 	Status               *string                             `json:"status,omitempty"`        // completed, failed, in_progress, cancelled, queued, or incomplete
 	StreamOptions        *ResponsesStreamOptions             `json:"stream_options,omitempty"`
@@ -3747,6 +3748,13 @@ const (
 	// Ping events are just keepalive (sent by very few providers, Anthropic is one of them)
 	ResponsesStreamResponseTypePing ResponsesStreamResponseType = "response.ping"
 
+	// ProviderRawEvent is a Bifrost-synthesized wrapper for a provider SSE event
+	// Bifrost cannot model (e.g. a new Anthropic event type). The payload lives
+	// only in ExtraFields.RawResponse; the provider-native egress (Anthropic
+	// integration passthrough) forwards it verbatim, and every other surface
+	// drops it (WithDefaults filters it like Ping).
+	ResponsesStreamResponseTypeProviderRawEvent ResponsesStreamResponseType = "response.provider_raw_event"
+
 	ResponsesStreamResponseTypeCreated    ResponsesStreamResponseType = "response.created"
 	ResponsesStreamResponseTypeInProgress ResponsesStreamResponseType = "response.in_progress"
 	ResponsesStreamResponseTypeCompleted  ResponsesStreamResponseType = "response.completed"
@@ -3867,6 +3875,13 @@ type BifrostResponsesStreamResponse struct {
 
 	ExtraFields BifrostResponseExtraFields `json:"extra_fields"`
 
+	// SafeguardResults carries the Claude Code auto-mode classifier verdicts found
+	// top-level on a provider stream event (opaque; forwarded unchanged per the
+	// gateway compatibility guide), so the provider-native egress can restore them
+	// on the re-rendered frame. Deliberately NOT copied by WithDefaults: OpenAI-shaped
+	// surfaces never see it.
+	SafeguardResults json.RawMessage `json:"safeguard_results,omitempty"`
+
 	// Perplexity-specific fields
 	SearchResults []SearchResult `json:"search_results,omitempty"`
 	Videos        []VideoResult  `json:"videos,omitempty"`
@@ -3894,7 +3909,7 @@ func (resp *BifrostResponsesStreamResponse) WithDefaults() *BifrostResponsesStre
 	}
 
 	// Filter out non-OpenAI response types
-	if resp.Type == ResponsesStreamResponseTypePing {
+	if resp.Type == ResponsesStreamResponseTypePing || resp.Type == ResponsesStreamResponseTypeProviderRawEvent {
 		return nil
 	}
 

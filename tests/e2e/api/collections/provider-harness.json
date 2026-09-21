@@ -158192,6 +158192,133 @@
           }
         }
       ]
+    },
+    {
+      "name": "105. Safeguards pass-through (Claude Code auto-mode classifier) (safeguards)",
+      "description": "Claude Code v2.1.278+ sends a top-level `safeguards` field on Anthropic /v1/messages requests and expects `safeguard_results` back in responses and SSE events; a gateway that drops either makes every session behind it ineligible for no-charge server-side auto-mode classifier checks (the client shows a notice naming the gateway and falls back to billed classifier requests). Bifrost's typed (non-passthrough) Anthropic path dropped `safeguards` in ToBifrostResponsesRequest and dropped `safeguard_results` when re-marshaling responses/stream frames from closed structs. Case 1 pins the typed request path: newman's UA is not claude-cli, so the raw-body passthrough is off and the request goes through the full convert/rebuild pipeline; x-bf-send-back-raw-request exposes the outbound payload, which must still contain `safeguards`. A 400 must be Anthropic's own rejection of the forwarded field (mentioning it by name), never a silent drop. Case 2 pins the claude-cli streaming passthrough: a stream request carrying `safeguards` must complete as a well-formed Anthropic SSE stream (message_start through message_stop).",
+      "item": [
+        {
+          "name": "Anthropic /v1/messages - safeguards forwarded on typed path (claude-haiku-4-5) - safeguards",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if ([401, 403, 429, 500, 502, 503, 504].indexOf(pm.response.code) !== -1) { return; }",
+                  "pm.test('safeguards reaches the outbound Anthropic request', function () {",
+                  "  if (pm.response.code === 400) {",
+                  "    pm.expect(pm.response.text(), 'a 400 must come from Anthropic rejecting the forwarded field, not from Bifrost dropping it: ' + pm.response.text()).to.include('safeguards');",
+                  "    return;",
+                  "  }",
+                  "  pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.be.below(400);",
+                  "  var body = pm.response.json();",
+                  "  pm.expect(body.extra_fields, 'extra_fields missing - raw request capture not enabled: ' + pm.response.text()).to.exist;",
+                  "  var rawReq = JSON.stringify(body.extra_fields.raw_request);",
+                  "  pm.expect(rawReq, 'outbound payload lost safeguards: ' + rawReq).to.include('\"safeguards\"');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{anthropicKey}}"
+              },
+              {
+                "key": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "key": "x-bf-send-back-raw-request",
+                "value": "true"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"claude-haiku-4-5\",\n  \"max_tokens\": 32,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Reply with the single word: ok\"\n    }\n  ],\n  \"safeguards\": {\n    \"probe\": \"auto_mode_classifier\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/anthropic/v1/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "anthropic",
+                "v1",
+                "messages"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Anthropic /v1/messages stream - safeguards through claude-cli passthrough (claude-haiku-4-5) - safeguards",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if ([401, 403, 429, 500, 502, 503, 504].indexOf(pm.response.code) !== -1) { return; }",
+                  "var text = pm.response.text();",
+                  "pm.test('stream completes through passthrough with safeguards present', function () {",
+                  "  if (pm.response.code === 400) {",
+                  "    pm.expect(text, 'a 400 must come from Anthropic rejecting the forwarded field, not from Bifrost: ' + text).to.include('safeguards');",
+                  "    return;",
+                  "  }",
+                  "  pm.expect(pm.response.code, 'failed: ' + text).to.be.below(400);",
+                  "  pm.expect(text, 'missing message_start: ' + text.slice(0, 500)).to.include('event: message_start');",
+                  "  pm.expect(text, 'missing message_stop: ' + text.slice(-500)).to.include('event: message_stop');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-api-key",
+                "value": "{{anthropicKey}}"
+              },
+              {
+                "key": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "key": "User-Agent",
+                "value": "claude-cli/2.1.278 (external)"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"claude-haiku-4-5\",\n  \"max_tokens\": 32,\n  \"stream\": true,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Reply with the single word: ok\"\n    }\n  ],\n  \"safeguards\": {\n    \"probe\": \"auto_mode_classifier\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/anthropic/v1/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "anthropic",
+                "v1",
+                "messages"
+              ]
+            }
+          }
+        }
+      ]
     }
   ]
 }

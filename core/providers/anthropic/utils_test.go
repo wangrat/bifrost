@@ -1497,6 +1497,29 @@ func TestStripUnsupportedFieldsFromRawBody(t *testing.T) {
 		}
 	})
 
+	t.Run("safeguards_gated_via_feature_map", func(t *testing.T) {
+		// safeguards is the Claude Code auto-mode classifier request field —
+		// Claude API only; every other provider strips it fail-closed via
+		// Safeguards=false (same policy as diagnostics).
+		const body = `{"model":"claude-opus-4-8","safeguards":{"check":"auto_mode"}}`
+		result, err := StripUnsupportedFieldsFromRawBody([]byte(body), schemas.Anthropic, "claude-opus-4-8")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !providerUtils.JSONFieldExists(result, "safeguards") {
+			t.Errorf("expected safeguards to be kept for Anthropic, got: %s", string(result))
+		}
+		for _, provider := range []schemas.ModelProvider{schemas.Azure, schemas.Bedrock, schemas.Vertex} {
+			result, err := StripUnsupportedFieldsFromRawBody([]byte(body), provider, "claude-opus-4-8")
+			if err != nil {
+				t.Fatalf("unexpected error for %s: %v", provider, err)
+			}
+			if providerUtils.JSONFieldExists(result, "safeguards") {
+				t.Errorf("expected safeguards to be stripped for %s, got: %s", provider, string(result))
+			}
+		}
+	})
+
 	t.Run("bedrock_strips_new_request_level_fields", func(t *testing.T) {
 		// Raw body with every new typed field. Targeting Bedrock: speed (no FastMode),
 		// inference_geo (no InferenceGeo), mcp_servers (no MCP), container.skills
@@ -4281,4 +4304,38 @@ func TestHandleAnthropicChatCompletionStreaming_PreservesEncodedPath(t *testing.
 	}
 	collectTruncationChunks(t, stream)
 	assertEncodedPathPreserved(t, rec.get())
+}
+
+// Claude Code auto-mode classifier: the typed strip gate must keep safeguards
+// only on Anthropic direct (fail-closed everywhere else, same as diagnostics).
+func TestStripUnsupportedAnthropicFieldsSafeguards(t *testing.T) {
+	mk := func() *AnthropicMessageRequest {
+		var req AnthropicMessageRequest
+		if err := sonic.Unmarshal([]byte(`{"model":"claude-opus-4-8","max_tokens":16,"messages":[{"role":"user","content":"hi"}],"safeguards":{"check":"auto_mode"}}`), &req); err != nil {
+			t.Fatalf("unmarshal request: %v", err)
+		}
+		return &req
+	}
+
+	req := mk()
+	stripUnsupportedAnthropicFields(req, schemas.Anthropic, "claude-opus-4-8")
+	out, err := sonic.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if !gjson.GetBytes(out, "safeguards").Exists() {
+		t.Errorf("expected safeguards to be kept for Anthropic, got: %s", string(out))
+	}
+
+	for _, provider := range []schemas.ModelProvider{schemas.Azure, schemas.Bedrock, schemas.Vertex} {
+		req := mk()
+		stripUnsupportedAnthropicFields(req, provider, "claude-opus-4-8")
+		out, err := sonic.Marshal(req)
+		if err != nil {
+			t.Fatalf("marshal request for %s: %v", provider, err)
+		}
+		if gjson.GetBytes(out, "safeguards").Exists() {
+			t.Errorf("expected safeguards to be stripped for %s, got: %s", provider, string(out))
+		}
+	}
 }

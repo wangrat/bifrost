@@ -321,6 +321,11 @@ func stripUnsupportedAnthropicFields(req *AnthropicMessageRequest, provider sche
 	if req.Diagnostics != nil && !features.Diagnostics {
 		req.Diagnostics = nil
 	}
+	// Safeguards (Claude Code auto-mode classifier) is Claude API only; other
+	// providers reject it as an unknown field.
+	if len(req.Safeguards) > 0 && !features.Safeguards {
+		req.Safeguards = nil
+	}
 	// cache_control.scope — strip on providers without PromptCachingScope
 	// support at every slot scope can live: top-level request, tools, system
 	// blocks, and message content blocks. Vertex additionally uses the
@@ -496,6 +501,15 @@ func StripUnsupportedFieldsFromRawBody(jsonBody []byte, provider schemas.ModelPr
 		jsonBody, err = providerUtils.DeleteJSONField(jsonBody, "diagnostics")
 		if err != nil {
 			return nil, fmt.Errorf("strip raw diagnostics: %w", err)
+		}
+	}
+
+	// safeguards — undocumented Claude Code auto-mode classifier field; only
+	// Anthropic direct keeps it (fail-closed), same policy as diagnostics.
+	if !features.Safeguards && providerUtils.JSONFieldExists(jsonBody, "safeguards") {
+		jsonBody, err = providerUtils.DeleteJSONField(jsonBody, "safeguards")
+		if err != nil {
+			return nil, fmt.Errorf("strip raw safeguards: %w", err)
 		}
 	}
 

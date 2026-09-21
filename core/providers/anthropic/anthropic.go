@@ -1753,6 +1753,19 @@ func HandleAnthropicResponsesStream(
 				return
 			}
 
+			// An event type Bifrost cannot model converts to zero chunks. When the
+			// caller asked for raw frames (Claude Code passthrough), dropping the
+			// event would strip unknown provider events (e.g. auto-mode
+			// safeguard_results); synthesize a raw-only carrier chunk instead so the
+			// integration can forward the frame verbatim. Non-passthrough surfaces
+			// filter this type out (WithDefaults / converter default case).
+			if len(responses) == 0 && !isLastChunk &&
+				providerUtils.ShouldSendBackRawResponse(ctx, sendBackRawResponse) {
+				responses = []*schemas.BifrostResponsesStreamResponse{{
+					Type: schemas.ResponsesStreamResponseTypeProviderRawEvent,
+				}}
+			}
+
 			// Attach the upstream raw to exactly one bifrost response. Default to the last,
 			// but for the message_start expansion ([created, in_progress]) attach it to
 			// response.created
@@ -1782,6 +1795,14 @@ func HandleAnthropicResponsesStream(
 
 					if providerUtils.ShouldSendBackRawResponse(ctx, sendBackRawResponse) && i == rawIdx {
 						response.ExtraFields.RawResponse = eventData
+					}
+
+					// Carry safeguard_results (Claude Code auto-mode classifier) so the
+					// Anthropic egress can restore it on re-rendered frames. Attached to
+					// the same single chunk as the raw frame, and not gated on raw capture
+					// so the fully typed path benefits too.
+					if i == rawIdx && len(event.SafeguardResults) > 0 {
+						response.SafeguardResults = event.SafeguardResults
 					}
 
 					if isLastChunk && i == len(responses)-1 {

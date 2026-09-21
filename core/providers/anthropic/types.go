@@ -195,6 +195,7 @@ type ProviderFeatureSupport struct {
 	Diagnostics            bool // diagnostics request field — cache diagnostics (cache-diagnosis-2026-04-07 beta, diagnostics.previous_message_id). Claude API only per docs ("not supported on Amazon Bedrock or Vertex AI"); stripped elsewhere fail-closed. Azure rejects it.
 	ServerSideFallback     bool // native "fallbacks" request field — server-side-fallback-2026-06-01. Claude API only per docs ("not available on Amazon Bedrock, Google Cloud, or Microsoft Foundry").
 	FallbackCredit         bool // fallback_credit_token request field + stop_details credit fields — fallback-credit-2026-06-01 (AWS surfaces: -2026-06-09). Documented on the Claude API, Amazon Bedrock, Google Cloud and Microsoft Foundry, i.e. the inverse of ServerSideFallback.
+	Safeguards             bool // safeguards request field + safeguard_results response field — Claude Code auto-mode server-side classifier (opaque, undocumented shape; gateway compatibility guide says forward unchanged). Claude API only; stripped elsewhere fail-closed.
 	MidConvToolChanges     bool // tool_addition/tool_removal blocks — mid-conversation-tool-changes-2026-07-01. Native Anthropic surface (Claude API + Bedrock Mantle); Bedrock is Opus 5 only, enforced upstream.
 }
 
@@ -217,6 +218,7 @@ var ProviderFeatures = map[schemas.ModelProvider]ProviderFeatureSupport{
 		Diagnostics:        true, // cache-diagnosis-2026-04-07 — Claude API only; only this provider keeps diagnostics.previous_message_id.
 		ServerSideFallback: true, // server-side-fallback-2026-06-01 — Claude API only.
 		FallbackCredit:     true, // fallback-credit-2026-06-01.
+		Safeguards:         true, // Claude Code auto-mode classifier — only this provider forwards safeguards/safeguard_results.
 		MidConvToolChanges: true, // mid-conversation-tool-changes-2026-07-01.
 	},
 	// Google Vertex AI — cite: A (overview table) and V-platform.
@@ -548,6 +550,11 @@ type AnthropicMessageRequest struct {
 	// the retry's cache writes. Requires the fallback-credit beta header, and is
 	// rejected on count_tokens.
 	FallbackCreditToken *string `json:"fallback_credit_token,omitempty"`
+
+	// Safeguards carries Claude Code's auto-mode server-side classifier request
+	// (opaque shape, undocumented; see the Claude Code gateway compatibility guide's
+	// feature pass-through section). Claude API only; stripped elsewhere fail-closed.
+	Safeguards json.RawMessage `json:"safeguards,omitempty"`
 
 	// Extra params for advanced use cases
 	ExtraParams map[string]interface{} `json:"-"`
@@ -961,6 +968,7 @@ var anthropicMessageRequestKnownFields = map[string]bool{
 	"container":             true,
 	"diagnostics":           true,
 	"fallback_credit_token": true,
+	"safeguards":            true,
 	"extra_params":          true,
 	"fallbacks":             true,
 }
@@ -995,6 +1003,12 @@ func (req *AnthropicMessageRequest) UnmarshalJSON(data []byte) error {
 		var buf bytes.Buffer
 		if err := json.Compact(&buf, req.OutputConfig.Format); err == nil {
 			req.OutputConfig.Format = json.RawMessage(buf.Bytes())
+		}
+	}
+	if len(req.Safeguards) > 0 {
+		var buf bytes.Buffer
+		if err := json.Compact(&buf, req.Safeguards); err == nil {
+			req.Safeguards = json.RawMessage(buf.Bytes())
 		}
 	}
 
@@ -1955,6 +1969,10 @@ type AnthropicMessageResponse struct {
 	// omitempty when absent; a present-but-null value (no divergence) is conveyed by a
 	// non-nil pointer with a nil CacheMissReason — see schemas.CacheDiagnostics.
 	Diagnostics *schemas.CacheDiagnostics `json:"diagnostics,omitempty"`
+	// SafeguardResults carries the Claude Code auto-mode server-side classifier
+	// verdicts (opaque, undocumented shape; the gateway compatibility guide requires
+	// forwarding it unchanged). Present only when the request carried safeguards.
+	SafeguardResults json.RawMessage `json:"safeguard_results,omitempty"`
 
 	// ExtraFields carries Bifrost's own response metadata (raw_request, raw_response,
 	// routing info, latency) on this route, mirroring the extra_fields member that
@@ -2149,6 +2167,11 @@ type AnthropicStreamEvent struct {
 	Delta        *AnthropicStreamDelta     `json:"delta,omitempty"`
 	Usage        *AnthropicUsage           `json:"usage,omitempty"`
 	Error        *AnthropicStreamError     `json:"error,omitempty"`
+
+	// SafeguardResults carries the Claude Code auto-mode server-side classifier
+	// verdicts on a stream event (opaque, undocumented shape; the gateway
+	// compatibility guide requires forwarding it unchanged).
+	SafeguardResults json.RawMessage `json:"safeguard_results,omitempty"`
 }
 
 type AnthropicStreamDeltaType string
