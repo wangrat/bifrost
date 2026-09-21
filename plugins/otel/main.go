@@ -127,6 +127,10 @@ type Profile struct {
 	// content, tool definitions, and tool call arguments/results are dropped from span attributes.
 	DisableContentLogging bool `json:"disable_content_logging,omitempty"`
 
+	// ExportRawPayloads attaches raw provider bodies to LLM spans. Off by default;
+	// requires store_raw_request_response and is suppressed by disable_content_logging.
+	ExportRawPayloads bool `json:"export_raw_payloads,omitempty"`
+
 	// GroupTracesBySession, when true, groups all requests sharing the same x-bf-session-id
 	// header into a single OTEL trace: every span adopts a session-derived trace ID and each
 	// request's root span becomes a top-level sibling under one synthetic session parent
@@ -420,6 +424,7 @@ type otelTarget struct {
 	metricsExporter          *MetricsExporter
 	requestHeaders           []string
 	disableContentLogging    bool
+	exportRawPayloads        bool
 	groupTracesBySession     bool
 	disableRootSpanContent   bool
 	overheadBreakdownEnabled bool
@@ -621,6 +626,7 @@ func (p *OtelPlugin) buildTarget(index int, profile *Profile) (*otelTarget, erro
 		traceType:                profile.TraceType,
 		requestHeaders:           slices.Clone(profile.RequestHeaders),
 		disableContentLogging:    profile.DisableContentLogging,
+		exportRawPayloads:        profile.ExportRawPayloads,
 		groupTracesBySession:     profile.GroupTracesBySession,
 		disableRootSpanContent:   profile.DisableRootSpanContent,
 		overheadBreakdownEnabled: profile.OverheadBreakdownEnabled,
@@ -876,6 +882,16 @@ func (p *OtelPlugin) ConsumesOverheadSpans() bool {
 	return false
 }
 
+// ConsumesRawPayloads opts in when any profile exports raw bodies.
+func (p *OtelPlugin) ConsumesRawPayloads() bool {
+	for _, t := range p.targets {
+		if t.exportRawPayloads {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *OtelPlugin) Inject(ctx context.Context, trace *schemas.Trace) error {
 	if trace == nil {
 		return nil
@@ -897,7 +913,7 @@ func (p *OtelPlugin) Inject(ctx context.Context, trace *schemas.Trace) error {
 			if t.client == nil || t.breakerOpen() {
 				return
 			}
-			resourceSpan := p.convertTraceToResourceSpan(t.serviceName, trace, t.requestHeaders, t.disableContentLogging, t.groupTracesBySession, t.disableRootSpanContent)
+			resourceSpan := p.convertTraceToResourceSpan(t.serviceName, trace, t.requestHeaders, t.disableContentLogging, t.exportRawPayloads, t.groupTracesBySession, t.disableRootSpanContent)
 			// The caller passes context.Background(), so this deadline is the only bound
 			// on the export — and the only bound at all on the gRPC path.
 			emitCtx, cancel := context.WithTimeout(ctx, t.exportTimeout)

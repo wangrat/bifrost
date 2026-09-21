@@ -440,9 +440,10 @@ func traceContentAttributeScopeForKey(key string) traceContentAttributeScope {
 	case AttrInputMessages, AttrInputText, AttrInputSpeech, AttrInputEmbedding,
 		AttrPrompt, AttrInstructions,
 		AttrTools, AttrToolChoiceType, AttrToolChoiceName,
-		AttrRespTools, AttrRespToolChoiceType, AttrRespToolChoiceName:
+		AttrRespTools, AttrRespToolChoiceType, AttrRespToolChoiceName,
+		AttrBifrostRawRequest:
 		return traceContentAttributeScopeInput
-	case AttrOutputMessages, AttrRespReasoningText:
+	case AttrOutputMessages, AttrRespReasoningText, AttrBifrostRawResponse:
 		return traceContentAttributeScopeOutput
 	case AttrToolName, AttrToolCallID, AttrToolCallArguments, AttrToolCallResult, AttrToolType:
 		return traceContentAttributeScopeMixed
@@ -474,6 +475,11 @@ func redactSpanAttributes(span *Span, inputReplacements map[string]string, outpu
 				span.Events[i].Attributes[key] = RedactAttributeValue(value, replacements)
 			}
 		}
+	}
+	// The typed payload is a separate carrier from Attributes, so it needs its own
+	// pass or connectors reading it would see unredacted content.
+	if span.LLM != nil {
+		span.LLM.redact(inputReplacements, outputReplacements)
 	}
 }
 
@@ -1077,7 +1083,9 @@ const (
 	AttrBifrostUserID              = "bifrost.user.id"
 	AttrBifrostUserName            = "bifrost.user.name"
 	AttrBifrostUserEmail           = "bifrost.user.email"
-	AttrBifrostApp                 = "bifrost.app" // calling client, classified from User-Agent
+	AttrBifrostApp                 = "bifrost.app"          // calling client, classified from User-Agent
+	AttrBifrostRawRequest          = "bifrost.raw_request"  // raw provider request body; content, opt-in
+	AttrBifrostRawResponse         = "bifrost.raw_response" // raw provider response body; content, opt-in
 	AttrBifrostRetries             = "bifrost.retries"
 	AttrBifrostFallbackIndex       = "bifrost.fallback_index"
 	AttrBifrostAlias               = "bifrost.alias"                // original requested model when it differs from the resolved model

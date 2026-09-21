@@ -2,6 +2,7 @@ package schemas
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -360,4 +361,62 @@ func TestAssertCostBreakdownCatchesMistakes(t *testing.T) {
 			t.Error("a total that does not match its sides was not reported")
 		}
 	})
+}
+
+// Guardrail redaction must reach the typed payload too: span.LLM is a separate
+// carrier from Attributes, and connectors read raw bodies from it.
+func TestRedactionReachesTypedPayload(t *testing.T) {
+	const pii = "sk-SECRET-TOKEN"
+	d := &LLMSpanData{
+		RawRequest:     `{"prompt":"` + pii + `"}`,
+		RawResponse:    `{"text":"` + pii + `"}`,
+		InputMessages:  []MessageSummary{{Role: "user", Content: pii, ToolCalls: []ToolCallSummary{{Args: pii}}}},
+		OutputMessages: []MessageSummary{{Role: "assistant", Content: pii}},
+		ReasoningText:  pii,
+	}
+	span := &Span{SpanID: "s1", Kind: SpanKindLLMCall, Attributes: d.Attributes(), LLM: d}
+	tr := &Trace{TraceID: "t1", RootSpan: span, Spans: []*Span{span}}
+
+	tr.SetRedactionReplacements(RedactionPhaseInput, map[string]string{pii: "[REDACTED]"})
+	tr.SetRedactionReplacements(RedactionPhaseOutput, map[string]string{pii: "[REDACTED]"})
+	tr.ApplyRedactionReplacements()
+
+	for name, got := range map[string]string{
+		"RawRequest":     d.RawRequest,
+		"RawResponse":    d.RawResponse,
+		"InputMessages":  d.InputMessages[0].Content,
+		"ToolCall.Args":  d.InputMessages[0].ToolCalls[0].Args,
+		"OutputMessages": d.OutputMessages[0].Content,
+		"ReasoningText":  d.ReasoningText,
+	} {
+		if strings.Contains(got, pii) {
+			t.Errorf("span.LLM.%s was not redacted: %q", name, got)
+		}
+	}
+}
+
+// Raw bodies arrive as interface{} holding whatever the provider stored. A byte
+// slice must come through as text: marshalling it would base64 the body.
+func TestEncodeRawPayloadShapes(t *testing.T) {
+	const want = `{"a":1}`
+	for name, v := range map[string]any{
+		"string":          want,
+		"[]byte":          []byte(want),
+		"json.RawMessage": json.RawMessage(want),
+		"map":             map[string]any{"a": 1},
+	} {
+		if got := EncodeRawPayload(v); got != want {
+			t.Errorf("%s: EncodeRawPayload = %q, want %q", name, got, want)
+		}
+	}
+	if got := EncodeRawPayload(nil); got != "" {
+		t.Errorf("nil: got %q, want empty", got)
+	}
+	// Over-cap, in every shape.
+	huge := strings.Repeat("x", RawPayloadCap+1)
+	for name, v := range map[string]any{"string": huge, "[]byte": []byte(huge), "json.RawMessage": json.RawMessage(huge)} {
+		if got := EncodeRawPayload(v); got != "" {
+			t.Errorf("%s over cap: kept %d bytes, want dropped", name, len(got))
+		}
+	}
 }

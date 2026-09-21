@@ -45,6 +45,7 @@ The plugin supports multiple trace formats to match your observability platform:
 | `tls_ca_cert` | `string` | ❌ No | File path to client CA certificate for TLS. Optional. Works with both gRPC and HTTP protocol |
 | `group_traces_by_session` | `boolean` | ❌ No | Group requests sharing the same `x-bf-session-id` into one trace (default: `false`). See [Grouping Traces by Session](#grouping-traces-by-session) |
 | `disable_content_logging` | `boolean` | ❌ No | Drop message content from exported spans (default: `false`). See [Controlling Exported Content](#controlling-exported-content) |
+| `export_raw_payloads` | `boolean` | ❌ No | Attach raw provider request/response bodies to LLM spans (default: `false`). See [Raw Provider Payloads](#raw-provider-payloads) |
 | `disable_root_span_content` | `boolean` | ❌ No | Drop content from the **root span only**, keeping it on child spans (default: `false`). Overridden by `disable_content_logging`, which drops content from every span. See [Controlling Exported Content](#controlling-exported-content) |
 | `request_headers` | `string[]` | ❌ No | Request-header name patterns whose values are attached to the root span as `http.request.header.*` attributes. Supports exact names and wildcards (`x-custom-*`, `*`) |
 
@@ -830,6 +831,30 @@ Two profile-level flags control how much message content leaves Bifrost:
 | Flag | Effect |
 |------|--------|
 | `disable_content_logging` | Drops input/output message content, prompt and instructions, model reasoning, tool definitions, and tool call arguments/results from **every** exported span. Metadata is still exported, including model, provider, tokens, cost, latency, status, and governance attribution. |
+
+### Raw Provider Payloads
+
+`export_raw_payloads` attaches the **raw bodies Bifrost exchanged with the provider** to LLM spans, as `bifrost.raw_request` and `bifrost.raw_response`. This is what makes the provider's exact wire format visible in Langfuse or any other OTLP backend.
+
+```json
+{
+  "export_raw_payloads": true
+}
+```
+
+Three conditions must all hold, and any one of them left unset means nothing is exported:
+
+1. The provider must capture them — `store_raw_request_response` on the provider config.
+2. This profile must opt in — `export_raw_payloads`. Other profiles on the same collector are unaffected.
+3. `disable_content_logging` must be `false`. It always wins: raw bodies are content.
+
+<Warning>
+Raw payloads are the least redacted data Bifrost holds. Normalized message content passes through redaction; raw bodies are what the provider actually received and returned, including anything a plugin rewrote. Enabling this sends the provider's exact payload to your collector. Bodies over 256 KB are dropped rather than truncated.
+</Warning>
+
+<Note>
+Nothing is built unless a connector asks for it. With no profile setting `export_raw_payloads`, the tracer never assembles raw bodies at all, so there is no cost to leaving it off.
+</Note>
 | `disable_root_span_content` | When used alone, drops content from the **root span only**. Bifrost duplicates input/output onto the root span for trace-level display; this removes that duplication while child spans keep full content. Useful when your backend indexes root-span attributes and you want to limit the blast radius without losing detail. `disable_content_logging` takes precedence: when it is enabled, child spans lose their content too. |
 
 ```json
