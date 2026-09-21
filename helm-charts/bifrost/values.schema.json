@@ -1190,6 +1190,13 @@
                       },
                       "description": "Request header names to capture as Datadog span tags"
                     },
+                    "metric_dimensions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "x-bf-dim-* dimension names to forward as DogStatsD metric tags. Off by default; each name multiplies metric series cardinality."
+                    },
                     "plugin_span_filter": {
                       "$ref": "#/$defs/pluginSpanFilter"
                     },
